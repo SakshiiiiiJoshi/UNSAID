@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 from app.schemas.user import UserCreate, UserLogin, UserOut, Token
 from app.db.session import get_db
@@ -12,9 +13,10 @@ router = APIRouter()
 
 
 @router.post("/register", response_model=UserOut, status_code=201)
-async def register(user_in: UserCreate, db: Session = Depends(get_db)):
+async def register(user_in: UserCreate, db: AsyncSession = Depends(get_db)):
     """Create a new user account."""
-    existing = db.query(User).filter(User.username == user_in.username).first()
+    result = await db.execute(select(User).where(User.username == user_in.username))
+    existing = result.scalar_one_or_none()
     if existing:
         raise InvalidCredentials()
 
@@ -23,15 +25,16 @@ async def register(user_in: UserCreate, db: Session = Depends(get_db)):
         hashed_password=get_password_hash(user_in.password),
     )
     db.add(db_user)
-    db.commit()
-    db.refresh(db_user)
+    await db.commit()
+    await db.refresh(db_user)
     return db_user
 
 
 @router.post("/login", response_model=Token)
-async def login(credentials: UserLogin, db: Session = Depends(get_db)):
+async def login(credentials: UserLogin, db: AsyncSession = Depends(get_db)):
     """Authenticate and return a JWT."""
-    user = db.query(User).filter(User.username == credentials.username).first()
+    result = await db.execute(select(User).where(User.username == credentials.username))
+    user = result.scalar_one_or_none()
     if not user or not verify_password(credentials.password, user.hashed_password):
         raise InvalidCredentials()
 
@@ -43,3 +46,4 @@ async def login(credentials: UserLogin, db: Session = Depends(get_db)):
 async def get_me(current_user: User = Depends(get_current_user)):
     """Return the currently authenticated user."""
     return current_user
+

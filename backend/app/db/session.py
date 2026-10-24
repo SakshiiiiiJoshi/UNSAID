@@ -1,26 +1,30 @@
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 
 from app.core.config import settings
-from app.db.models.user import Base
 
-engine = create_engine(
+# asyncpg driver: postgresql+asyncpg://user:pass@host/db
+engine = create_async_engine(
     settings.DATABASE_URL,
-    connect_args={"check_same_thread": False}  # Needed for SQLite only
+    pool_pre_ping=True,   # Detect stale connections before use
+    pool_size=10,
+    max_overflow=20,
+    echo=False,           # Set True temporarily for SQL debugging
 )
 
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+AsyncSessionLocal = async_sessionmaker(
+    bind=engine,
+    class_=AsyncSession,
+    expire_on_commit=False,
+    autocommit=False,
+    autoflush=False,
+)
 
 
-def create_tables():
-    """Create all tables. Called once at startup."""
-    Base.metadata.create_all(bind=engine)
-
-
-def get_db():
-    """Dependency that yields a database session per request."""
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+async def get_db() -> AsyncSession:
+    """FastAPI dependency — yields an async DB session per request."""
+    async with AsyncSessionLocal() as session:
+        try:
+            yield session
+        except Exception:
+            await session.rollback()
+            raise

@@ -7,13 +7,14 @@ held on the user's device.
 """
 
 from datetime import datetime, timezone, timedelta
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, delete
 
 from app.db.models.memory import Memory
 from app.schemas.memory import MemoryCreate, MemoryOut, PrivacyReceipt
 
 
-def create_memory(db: Session, memory_in: MemoryCreate, owner_id: str) -> Memory:
+async def create_memory(db: AsyncSession, memory_in: MemoryCreate, owner_id: str) -> Memory:
     """Store a new encrypted memory."""
     db_memory = Memory(
         encrypted_data=memory_in.encrypted_data,
@@ -21,59 +22,58 @@ def create_memory(db: Session, memory_in: MemoryCreate, owner_id: str) -> Memory
         owner_id=owner_id,
     )
     db.add(db_memory)
-    db.commit()
-    db.refresh(db_memory)
+    await db.commit()
+    await db.refresh(db_memory)
     return db_memory
 
 
-def get_memories(db: Session, owner_id: str, skip: int = 0, limit: int = 50) -> list[Memory]:
+async def get_memories(
+    db: AsyncSession, owner_id: str, skip: int = 0, limit: int = 50
+) -> list[Memory]:
     """Return all encrypted memories for a user (server returns ciphertext)."""
-    return (
-        db.query(Memory)
-        .filter(Memory.owner_id == owner_id)
+    result = await db.execute(
+        select(Memory)
+        .where(Memory.owner_id == owner_id)
         .order_by(Memory.created_at.desc())
         .offset(skip)
         .limit(limit)
-        .all()
     )
+    return result.scalars().all()
 
 
-def get_memory(db: Session, memory_id: str, owner_id: str) -> Memory | None:
+async def get_memory(db: AsyncSession, memory_id: str, owner_id: str) -> Memory | None:
     """Get a single memory, scoped to the owner."""
-    return (
-        db.query(Memory)
-        .filter(Memory.id == memory_id, Memory.owner_id == owner_id)
-        .first()
+    result = await db.execute(
+        select(Memory).where(Memory.id == memory_id, Memory.owner_id == owner_id)
     )
+    return result.scalar_one_or_none()
 
 
-def delete_memory(db: Session, memory_id: str, owner_id: str) -> bool:
+async def delete_memory(db: AsyncSession, memory_id: str, owner_id: str) -> bool:
     """
     Delete memory from the database.
     The client should also destroy the local AES key (crypto-delete)
     so even server backups become unrecoverable.
     """
-    memory = get_memory(db, memory_id, owner_id)
+    memory = await get_memory(db, memory_id, owner_id)
     if not memory:
         return False
-    db.delete(memory)
-    db.commit()
+    await db.delete(memory)
+    await db.commit()
     return True
 
 
-def purge_expired_memories(db: Session) -> int:
+async def purge_expired_memories(db: AsyncSession) -> int:
     """
     Delete memories past their 7-day TTL.
     Should be called by a scheduled background task.
     """
     cutoff = datetime.now(timezone.utc) - timedelta(days=7)
-    count = (
-        db.query(Memory)
-        .filter(Memory.created_at < cutoff)
-        .delete(synchronize_session="fetch")
+    result = await db.execute(
+        delete(Memory).where(Memory.created_at < cutoff)
     )
-    db.commit()
-    return count
+    await db.commit()
+    return result.rowcount
 
 
 def build_privacy_receipt(stored: int = 0, deleted: int = 0) -> PrivacyReceipt:
@@ -85,3 +85,4 @@ def build_privacy_receipt(stored: int = 0, deleted: int = 0) -> PrivacyReceipt:
         encryption_key_holder="this_device",
         shared_externally=False,
     )
+

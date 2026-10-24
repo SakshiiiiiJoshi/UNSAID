@@ -4,13 +4,15 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import chat, memory, user
 from app.core.config import settings
-from app.db.session import create_tables
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Startup / shutdown lifecycle."""
-    create_tables()
+    """Startup / shutdown lifecycle.
+
+    Schema is managed by Alembic — run `alembic upgrade head` before starting.
+    Add any startup tasks here (e.g. warm caches, check DB connectivity).
+    """
     yield
 
 
